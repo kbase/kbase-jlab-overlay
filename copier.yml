@@ -1,0 +1,23 @@
+_subdirectory: ""
+_answers_file: .copier-answers-kbase.yml
+
+_skip_if_exists: []
+
+_tasks:
+  - "python {{ _copier_conf.src_path }}/post_copy.py {{ python_name }}"
+
+python_name:
+  type: str
+  help: "Python package name (e.g. berdl_task_browser)"
+
+labextension_name:
+  type: str
+  help: "Lab extension name (e.g. berdl-task-browser)"
+
+kind:
+  type: str
+  choices:
+    frontend: Frontend only
+    frontend-and-server: Frontend and server extension
+  default: frontend
+  help: "Extension kind (must match the base template)"

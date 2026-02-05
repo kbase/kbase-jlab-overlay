@@ -1,0 +1,99 @@
+name: PR Prerelease
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+jobs:
+  create_prerelease:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      tag: ${{ steps.create.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Get version from hatch-vcs
+        id: version
+        run: |
+          pip install hatch hatch-vcs
+          version=$(hatch version)
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Create or update prerelease
+        id: create
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ steps.version.outputs.version }}-pr${{ github.event.pull_request.number }}"
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+
+          gh release create "$tag" \
+            --title "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}" \
+            --notes "Prerelease for PR #${{ github.event.pull_request.number }}
+
+          **Branch:** \`${{ github.event.pull_request.head.ref }}\`
+          **Commit:** ${{ github.sha }}" \
+            --prerelease \
+            --target "${{ github.sha }}"
+
+      - name: Comment on PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.create.outputs.tag }}"
+          comment_body="<!-- kbase-prerelease-comment -->
+          **Prerelease:** [$tag](${{ github.event.repository.html_url }}/releases/tag/${tag})
+
+          _Wheel will be attached once the build completes. Updated on each push._"
+
+          existing=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq '.[] | select(.body | contains("kbase-prerelease-comment")) | .id' | head -n1)
+
+          if [ -n "$existing" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/$existing" \
+              --method PATCH --field body="$comment_body"
+          else
+            gh pr comment "${{ github.event.pull_request.number }}" --body "$comment_body"
+          fi
+
+  build:
+    needs: create_prerelease
+    uses: ./.github/workflows/build-wheel.yml
+    with:
+      release_tag: ${{ needs.create_prerelease.outputs.tag }}
+    permissions:
+      contents: write
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete PR prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pr_num="${{ github.event.pull_request.number }}"
+          tags=$(gh release list --limit 100 --json tagName \
+            --jq ".[].tagName | select(endswith(\"-pr${pr_num}\"))" 2>/dev/null || true)
+          for tag in $tags; do
+            echo "Deleting $tag"
+            gh release delete "$tag" --yes --cleanup-tag || true
+          done
