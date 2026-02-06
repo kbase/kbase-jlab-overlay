@@ -125,6 +125,7 @@ def delete_files() -> None:
         ".github/workflows/check-release.yml",
         ".github/workflows/prep-release.yml",
         ".github/workflows/publish-release.yml",
+        ".github/workflows/enforce-label.yml",
     ]
     for f in files_to_delete:
         path = Path(f)
